@@ -126,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
                                        first_line=args.line))
 
     if result.unterminated:
+        # Flush first: the map has just gone to stdout and the complaint is
+        # about to go to stderr, and a reader merging the two wants them in
+        # the order they were written.
+        sys.stdout.flush()
         print(file=sys.stderr)
         print(render.render_unterminated(result, first_line=args.line),
               file=sys.stderr)
