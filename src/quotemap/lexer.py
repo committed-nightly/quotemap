@@ -215,12 +215,18 @@ class Expansion:
 
     @property
     def reason(self) -> str:
-        """Why the verdict is what it is. May be empty when it is obvious."""
+        """Why the verdict is what it is, when that is not self-evident.
+
+        A ``quoted`` expansion explains itself, so a nosplit reason is not
+        printed for one even when it applies: ``x="$y"`` is an assignment
+        right-hand side *and* double-quoted, and saying both is noise.
+        """
         if self.inert_reason:
             return self.inert_reason
-        suppressor = suppressor_of(self.stack)
-        if suppressor:
-            return suppressor
+        if not self.expanded:
+            return suppressor_of(self.stack)
+        if self.quoted:
+            return ""
         return self.nosplit_reason
 
     @property
@@ -451,9 +457,8 @@ class _Scanner:
             # not itself double-quoted. `x=; echo "${x:-'a b'}"` prints the
             # single quotes; unquoted, the same line does not. Confirmed
             # against bash rather than assumed.
-            start = self.i
+            self._push(SQ if ch == "'" else DQ, self.i)
             self._emit(syntax=True)
-            self._push(SQ if ch == "'" else DQ, start)
         elif ch == "$" and self._try_dollar():
             return
         elif ch == "`":
@@ -583,9 +588,8 @@ class _Scanner:
             return
         if ch in "'\"":
             self._note_word_char()
-            start = self.i
+            self._push(SQ if ch == "'" else DQ, self.i)
             self._emit(syntax=True)
-            self._push(SQ if ch == "'" else DQ, start)
             return
         if ch == "`":
             if kind == BACKTICK:
@@ -600,8 +604,12 @@ class _Scanner:
             if not self._try_dollar():
                 self._emit()
             return
-        if ch == "<" and self._peek(1) == "<" and self._peek(2) != "<":
-            self._scan_heredoc_operator()
+        if ch == "<" and self._peek(1) == "<":
+            if self._peek(2) == "<":
+                self._end_word()
+                self._emit(3)  # a here-string, which expands like any word
+            else:
+                self._scan_heredoc_operator()
             return
         if ch == "(":
             if kind == CMDSUB:
@@ -643,8 +651,8 @@ class _Scanner:
         stack = self._stack_view()
         reason = self._nosplit_reason()
         line, col = self.line, self.col
-        self._emit(syntax=True)
         frame = self._push(BACKTICK, start)
+        self._emit(syntax=True)
         frame.saved_word = self._word_state()
         self._reset_word_state()
         self._defer(start, "backtick", line, col, stack, reason)
@@ -746,32 +754,32 @@ class _Scanner:
         in_command_ctx = self.top_kind in COMMAND_KINDS
 
         if nxt == "(" and self._peek(2) == "(":
-            self._emit(3, syntax=True)
             self._push(ARITH, start)
+            self._emit(3, syntax=True)
             self._defer(start, "arithmetic", line, col, stack, reason)
             return True
         if nxt == "(":
-            self._emit(2, syntax=True)
             frame = self._push(CMDSUB, start)
+            self._emit(2, syntax=True)
             frame.saved_word = self._word_state()
             self._reset_word_state()
             self._defer(start, "command", line, col, stack, reason)
             return True
         if nxt == "{":
-            self._emit(2, syntax=True)
             frame = self._push(PARAM, start)
             frame.quotes_live = not quoted_in(stack)
+            self._emit(2, syntax=True)
             self._defer(start, "braced", line, col, stack, reason)
             return True
         if nxt == "'" and in_command_ctx:
             # $'...' is ANSI-C quoting, but only where quoting can start.
             # Inside "..." the sequence $' is a literal dollar and a quote.
-            self._emit(2, syntax=True)
             self._push(ANSI, start)
+            self._emit(2, syntax=True)
             return True
         if nxt == '"' and in_command_ctx:
-            self._emit(2, syntax=True)
             self._push(LOCALE, start)
+            self._emit(2, syntax=True)
             return True
         if _is_name_start(nxt):
             self._emit(syntax=True)
