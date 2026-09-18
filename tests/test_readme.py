@@ -19,7 +19,14 @@ import shutil
 import subprocess
 import sys
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:  # pragma: no cover
+    # The CI job that runs this standalone installs the package the way a
+    # user would -- `pip install .`, no dev extras -- because checking the
+    # README against a plain install is the whole point of running it that
+    # way. pytest is not there, and is not needed to do the checking.
+    pytest = None
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -79,12 +86,14 @@ def check() -> int:
     return 1 if failures else 0
 
 
-@pytest.mark.skipif(
-    shutil.which("quotemap", path=PATH) is None,
-    reason="needs the console script installed; pip install -e .",
-)
-def test_readme_examples_are_accurate():
-    assert check() == 0, "the README no longer describes the tool"
+if pytest is not None:
+
+    @pytest.mark.skipif(
+        shutil.which("quotemap", path=PATH) is None,
+        reason="needs the console script installed; pip install -e .",
+    )
+    def test_readme_examples_are_accurate():
+        assert check() == 0, "the README no longer describes the tool"
 
 
 if __name__ == "__main__":
