@@ -42,6 +42,10 @@ Useful flags: `-e/--expansions` for the table alone, `-m/--map` for the picture 
 `-d/--depth` to add a nesting-depth ruler, `--line N` to number a fragment by its real
 position in a larger file, `--color auto|always|never`.
 
+An expansion that spans several lines is folded onto one row of the table, so the
+columns stay aligned. The `line:column` on the left and the map above it both point at
+where it really is.
+
 The ruler symbols:
 
 | | | | |
