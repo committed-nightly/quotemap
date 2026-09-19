@@ -69,6 +69,13 @@ class Ctx:
     opened_at: int
     #: Only meaningful for HEREDOC: a ``<<'EOF'`` body does not expand.
     expand: bool = True
+    #: Which frame this is, counting from the start of the scan. Two frames
+    #: can share ``opened_at`` — a heredoc body's first character is also the
+    #: ``$`` of a substitution that starts the body — so identity needs its
+    #: own field. Excluded from ``==`` and ``hash``: two views of the same
+    #: construct should still compare by what they mean, not by when the
+    #: scanner happened to open them.
+    serial: int = field(default=-1, compare=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging convenience
         return f"Ctx({self.kind}@{self.opened_at})"
@@ -89,9 +96,11 @@ class _Frame:
     saved_word: tuple | None = None
     #: For PARAM: whether ' and " inside the braces are quotes at all.
     quotes_live: bool = True
+    #: Unique per frame within one scan. See :attr:`Ctx.serial`.
+    serial: int = -1
 
     def view(self) -> Ctx:
-        return Ctx(self.kind, self.opened_at, self.expand)
+        return Ctx(self.kind, self.opened_at, self.expand, self.serial)
 
 
 def expands_in(stack: tuple[Ctx, ...]) -> bool:
@@ -290,7 +299,10 @@ class _Scanner:
         self.expansions: list[Expansion] = []
         self.unterminated: list[tuple[str, int, int]] = []
         # Expansions whose closing delimiter has not been seen yet.
-        self.deferred: list[tuple[int, int]] = []
+        self.deferred: list[tuple[int, int, int]] = []
+        # Hands out _Frame.serial. Only ever increments, so a serial is never
+        # reused even after its frame is popped.
+        self.next_serial = 0
         self.line = 1
         self.col = 1
         # Here-documents announce themselves on one line and begin on the
@@ -332,7 +344,8 @@ class _Scanner:
     def _push(self, kind: str, opened_at: int, *, expand: bool = True,
               delimiter: str = "", strip_tabs: bool = False) -> _Frame:
         frame = _Frame(kind, opened_at, expand=expand, delimiter=delimiter,
-                       strip_tabs=strip_tabs)
+                       strip_tabs=strip_tabs, serial=self.next_serial)
+        self.next_serial += 1
         self.stack.append(frame)
         return frame
 
@@ -870,8 +883,11 @@ class _Scanner:
         The closing delimiter has not been seen, so ``end`` and ``text`` get
         patched in after the scan. Keeping a placeholder in the list now
         preserves source order, which is what a reader wants.
+
+        Every caller pushes the expansion's own frame immediately before
+        calling this, so the top of the stack is the frame to patch against.
         """
-        self.deferred.append((len(self.expansions), start))
+        self.deferred.append((len(self.expansions), start, self.stack[-1].serial))
         self.expansions.append(
             Expansion(start, start, "", form, line, col, stack, reason)
         )
@@ -923,15 +939,22 @@ def _patch_extents(scanner: _Scanner, result: ScanResult) -> None:
     matching close is found here by asking which characters ended up inside
     that frame, since every character already carries the stack it was read
     under.
+
+    Frames are identified by :attr:`Ctx.serial`, not by source index. A
+    heredoc body's frame opens *at* its first character, so ``cat <<EOF``
+    followed by a body starting ``$(...)`` gives the heredoc and the
+    substitution the same ``opened_at`` — and keying on that made the
+    substitution's extent run to the end of the heredoc instead of to its
+    own ``)``.
     """
     last_index: dict[int, int] = {}
     for state in result.chars:
         for ctx in state.stack:
-            last_index[ctx.opened_at] = state.index
+            last_index[ctx.serial] = state.index
 
-    for slot, start in scanner.deferred:
+    for slot, start, serial in scanner.deferred:
         old = result.expansions[slot]
-        end = last_index.get(start, start) + 1
+        end = last_index.get(serial, start) + 1
         result.expansions[slot] = Expansion(
             start, end, scanner.src[start:end], old.form, old.line,
             old.column, old.stack, old.nosplit_reason,

@@ -135,6 +135,30 @@ def test_heredoc_expansion_matches_bash(program, expected):
     assert exp.split is False  # never, in a here-document
 
 
+@pytest.mark.parametrize(
+    "opener,expected",
+    [("$(echo hi)", "hi"), ("${x}", "a b"), ("$((1+1))", "2"), ("`echo hi`", "hi")],
+)
+def test_an_expansion_opening_a_heredoc_body_is_bounded_by_its_own_close(
+    opener, expected
+):
+    """bash ends the here-document at EOF, so the expansion cannot contain it.
+
+    This reported a text of ``$(echo hi)\\nEOF\\n`` before — which, if it were
+    true, would leave the here-document unterminated and bash would never
+    print anything. That bash prints and exits 0 is the whole proof.
+    """
+    program = f"cat <<EOF\n{opener} tail\nEOF\n"
+    assert _run(program) == [f"{expected} tail"]
+
+    (exp,) = [
+        e for e in scan(PRELUDE + program).expansions
+        if e.start >= len(PRELUDE) + len("cat <<EOF\n")
+    ]
+    assert "EOF" not in exp.text
+    assert exp.text == opener
+
+
 # -- the claim the whole tool exists to make ---------------------------
 
 

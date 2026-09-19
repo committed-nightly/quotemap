@@ -193,6 +193,52 @@ def test_two_heredocs_on_one_line():
     assert [e.verdict for e in result.expansions] == ["quoted", "literal"]
 
 
+# A heredoc's frame opens *at* the first character of its body rather than at
+# its own punctuation, so a substitution starting the body shares that index.
+# Extents used to be keyed on the index alone, and the substitution's text ran
+# to the end of the heredoc instead of to its own closing delimiter.
+
+
+@pytest.mark.parametrize("expansion", ["$(echo hi)", "${x}", "$((1+1))", "`date`"])
+def test_expansion_opening_a_heredoc_body_stops_at_its_own_close(expansion):
+    (exp,) = scan(f"cat <<EOF\n{expansion}\nEOF\n").expansions
+    assert exp.text == expansion
+    assert exp.start == len("cat <<EOF\n")
+    assert exp.end == exp.start + len(expansion)
+
+
+def test_expansion_opening_a_heredoc_body_does_not_swallow_the_rest():
+    (exp,) = scan("cat <<EOF\n$(date) and more\nEOF\n").expansions
+    assert exp.text == "$(date)"
+
+
+def test_both_expansions_are_right_when_one_opens_the_body():
+    result = scan("cat <<EOF\n$(a) then $(b)\nEOF\n")
+    assert [e.text for e in result.expansions] == ["$(a)", "$(b)"]
+
+
+def test_nested_expansion_at_the_start_of_a_heredoc_body():
+    """Three frames open at the same index here: heredoc, outer, inner."""
+    result = scan("cat <<EOF\n$($(x))\nEOF\n")
+    assert [e.text for e in result.expansions] == ["$($(x))", "$(x)"]
+
+
+def test_frames_sharing_an_index_get_distinct_serials():
+    """The invariant the extent patching relies on."""
+    result = scan("cat <<EOF\n$(x)\nEOF\n")
+    dollar = next(c for c in result.chars if c.index == len("cat <<EOF\n"))
+    heredoc, cmdsub = dollar.stack
+    assert heredoc.kind == lexer.HEREDOC and cmdsub.kind == lexer.CMDSUB
+    assert heredoc.opened_at == cmdsub.opened_at
+    assert heredoc.serial != cmdsub.serial
+
+
+def test_serial_does_not_affect_how_contexts_compare():
+    """Two views of the same construct still compare by what they mean."""
+    assert lexer.Ctx(lexer.DQ, 3, serial=0) == lexer.Ctx(lexer.DQ, 3, serial=7)
+    assert len({lexer.Ctx(lexer.DQ, 3, serial=0), lexer.Ctx(lexer.DQ, 3, serial=7)}) == 1
+
+
 # -- brace expansions --------------------------------------------------
 
 
