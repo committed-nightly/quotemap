@@ -33,6 +33,17 @@ def test_expansions_only(capsys):
     assert "split" in out
 
 
+def test_a_multi_line_expansion_stays_on_one_row(capsys):
+    """A $( ) can span lines; a newline in the cell wrecks every row below."""
+    _, out, _ = run(capsys, "-c", "x=$(\n  echo hi\n) $y", "--expansions")
+    rows = [r for r in out.splitlines() if r and not r.startswith("  ")]
+    assert len(rows) == 2
+    assert "$( echo hi )" in rows[0]
+
+    columns = [r.index("command") if "command" in r else r.index("parameter") for r in rows]
+    assert columns[0] == columns[1]  # the form column still lines up
+
+
 def test_map_only(capsys):
     code, out, _ = run(capsys, "-c", "echo $x", "--map")
     assert code == 0

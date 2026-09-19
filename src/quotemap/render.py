@@ -111,6 +111,19 @@ def _paint(states: list[CharState], fallback: str, color: bool) -> str:
     return "".join(out)
 
 
+def _one_line(text: str) -> str:
+    """Fold a multi-line expansion onto its single row in the table.
+
+    A ``$( )`` can legitimately span lines, and its raw text would put a
+    newline in the middle of a column and knock every row below it out of
+    alignment. The map above already shows the real layout; this column only
+    has to say which expansion the row is about.
+    """
+    if "\n" not in text:
+        return text
+    return " ".join(text.split())
+
+
 def render_expansions(expansions: list[Expansion], *, color: bool = False,
                       first_line: int = 1) -> str:
     """The table: one row per expansion, in source order."""
@@ -120,7 +133,8 @@ def render_expansions(expansions: list[Expansion], *, color: bool = False,
     rows = []
     for exp in expansions:
         line = exp.line + first_line - 1
-        rows.append((f"{line}:{exp.column}", exp.text, exp.form, exp.verdict, exp.reason))
+        rows.append((f"{line}:{exp.column}", _one_line(exp.text), exp.form,
+                     exp.verdict, exp.reason))
 
     widths = [max(len(row[i]) for row in rows) for i in range(4)]
     out = []
